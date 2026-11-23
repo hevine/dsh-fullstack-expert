@@ -6,8 +6,9 @@
  *   2. 工程流程引导（systemPrompt.section，order 450，先于 plan 策略）
  *   3. stack_probe 工具（技术栈探测，只读）
  *   4. repo_conventions 工具（仓库规约抽取，只读）
- *   5. run_checks 工具（执行项目声明的 lint/typecheck/test，只读检查）
- *   6. 四个工程 Skill（运行时注册进 ctx.skills，无需额外配置）
+ *   5. repo_guidelines 工具（读取仓库内 .dsh/skills 下的 SKILL.md，只读）
+ *   6. run_checks 工具（执行项目声明的 lint/typecheck/test，只读检查）
+ *   7. 四个工程 Skill（运行时注册进 ctx.skills，无需额外配置）
  *
  * 构建：npm run build（产物 lib/index.js，GitHub 安装直接可用）
  */
@@ -1594,7 +1595,12 @@ function renderConventions(report: ConventionsReport): string {
 
 /* --------------------------------- Skill --------------------------------- */
 
-function parseFrontmatter(file: string): { name: string; description: string; content: string } | null {
+function parseFrontmatter(file: string): {
+  name: string
+  description: string
+  content: string
+  meta: Record<string, string>
+} | null {
   const raw = readFileSync(file, 'utf8')
   const matched = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(raw)
   if (!matched) return null
@@ -1606,7 +1612,7 @@ function parseFrontmatter(file: string): { name: string; description: string; co
   const skillName = meta.name
   const description = meta.description
   if (!skillName || !description) return null
-  return { name: skillName, description, content: matched[2]!.trim() }
+  return { name: skillName, description, content: matched[2]!.trim(), meta }
 }
 
 function loadSkills(skillsDir: string): SkillRegistration[] {
@@ -1632,6 +1638,122 @@ function loadSkills(skillsDir: string): SkillRegistration[] {
     })
   }
   return skills
+}
+
+/* ------------------------------ 仓库项目规则 ------------------------------ */
+
+const REPO_SKILLS_REL = path.join('.dsh', 'skills')
+const GUIDELINES_MAX_BYTES = 20 * 1024
+
+export interface RepoGuideline {
+  name: string
+  description: string
+  appliesTo: string
+  content: string
+  path: string
+}
+
+export interface GuidelinesReport {
+  root: string
+  matched: RepoGuideline[]
+  notes: string[]
+}
+
+/**
+ * 只读仓库根 .dsh/skills 下每个主题目录里的 SKILL.md。
+ * 项目级知识留在仓库里，按 topic 裁剪后经工具结果注入，避免全局注册造成跨仓库污染。
+ */
+function clipToBytes(text: string, maxBytes: number): string {
+  let used = 0
+  let out = ''
+  for (const ch of text) {
+    const bytes = Buffer.byteLength(ch, 'utf8')
+    if (used + bytes > maxBytes) break
+    used += bytes
+    out += ch
+  }
+  return out
+}
+
+function collectRepoGuidelines(root: string, topic?: string): GuidelinesReport {
+  const dir = path.join(root, REPO_SKILLS_REL)
+  const notes: string[] = []
+  const matched: RepoGuideline[] = []
+
+  if (!existsSync(dir)) {
+    notes.push('该仓库未定义项目规则（缺少 .dsh/skills/），按通用 Skill 与仓库既有代码行事')
+    return { root, matched, notes }
+  }
+
+  const keyword = topic?.trim().toLowerCase()
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue
+    const file = path.join(dir, entry.name, 'SKILL.md')
+    if (!existsSync(file)) continue
+    const parsed = parseFrontmatter(file)
+    const rel = path.posix.join('.dsh', 'skills', entry.name, 'SKILL.md')
+    if (!parsed) {
+      notes.push(`跳过无法解析 frontmatter 的项目规则：${rel}`)
+      continue
+    }
+    const appliesTo = parsed.meta.appliesTo ?? ''
+    if (keyword) {
+      const haystack = `${parsed.name}\n${parsed.description}\n${appliesTo}\n${parsed.content}`.toLowerCase()
+      if (!haystack.includes(keyword)) continue
+    }
+    matched.push({
+      name: parsed.name,
+      description: parsed.description,
+      appliesTo,
+      content: parsed.content,
+      path: rel,
+    })
+  }
+
+  if (matched.length === 0) {
+    notes.push(
+      keyword
+        ? `未找到匹配 topic=${keyword} 的项目规则，退回通用 Skill`
+        : '该仓库未在 .dsh/skills/ 下定义项目规则，退回通用 Skill',
+    )
+    return { root, matched, notes }
+  }
+
+  let used = 0
+  for (let i = 0; i < matched.length; i++) {
+    const item = matched[i]!
+    const bytes = Buffer.byteLength(item.content, 'utf8')
+    if (used + bytes <= GUIDELINES_MAX_BYTES) {
+      used += bytes
+      continue
+    }
+    const remaining = GUIDELINES_MAX_BYTES - used
+    if (remaining > 0) {
+      item.content = clipToBytes(item.content, remaining)
+      matched.splice(i + 1)
+    } else {
+      matched.splice(i)
+    }
+    notes.push('项目规则超过 20KB 上限，已截断；需要完整内容时直接读对应文件')
+    break
+  }
+
+  return { root, matched, notes }
+}
+
+function renderGuidelines(report: GuidelinesReport): string {
+  if (report.matched.length === 0) {
+    return [`仓库：${report.root}`, '项目规则：未定义', ...report.notes].join('\n')
+  }
+  const lines: string[] = [`仓库：${report.root}`, `命中项目规则 ${report.matched.length} 条：`]
+  for (const item of report.matched) {
+    lines.push('', `## ${item.name}（${item.path}）`)
+    lines.push(`说明：${item.description}`)
+    if (item.appliesTo) lines.push(`适用：${item.appliesTo}`)
+    lines.push('', item.content)
+  }
+  if (report.notes.length > 0) lines.push('', `注意：${report.notes.join('；')}`)
+  return lines.join('\n')
 }
 
 /* --------------------------------- 插件 --------------------------------- */
@@ -1662,6 +1784,9 @@ export function apply(ctx: Context) {
       '框架、数据库、测试框架、lint/test 命令、CI 与容器配置。后续命令必须来自探测结果或仓库既有脚本。',
       '首次接触仓库或改动跨模块时，调用 repo_conventions 拿到目录结构、命名风格、测试位置、配置清单',
       '与「建议先读」文件；再按其中的 readNext 真读 2-3 个文件，确认该仓库的实际写法后动手。',
+      '动手前先调用 repo_guidelines（传 topic 或路径关键词）读取仓库在 .dsh/skills/ 下声明的项目规则：',
+      '不变量、必读文件、完成标准。项目规则与通用 skill 冲突时以项目规则为准。',
+      '若返回「未定义项目规则」，就退回通用 skill 与仓库既有代码，不要凭空假设仓库约定。',
       '改完必须调用 run_checks 跑 lint/typecheck/test；涉及前端内嵌产物或单二进制时再加 build，并确认产物已更新。把真实输出写进回答；',
       '失败就贴输出尾部并继续修，直到通过，或明确说明某个检查为何无法运行。',
       '不要自创检查命令，也不要用「应该能通过」替代实际运行。',
@@ -1878,7 +2003,65 @@ export function apply(ctx: Context) {
   }
   ctx.tools.register(conventionsTool)
 
-  // 5) 闭环验证：只执行项目声明的只读检查（lint/typecheck/test），不接受任意命令
+  // 5) 仓库项目规则：只读 .dsh/skills/，按 topic 裁剪后注入工具结果
+  const repoGuidelinesTool: ToolDefinition = {
+    name: 'repo_guidelines',
+    description:
+      '读取仓库根 .dsh/skills/*/SKILL.md 中声明的项目级规则（不变量、必读文件、完成标准），可用 topic 按关键词过滤。只读，且只读取该目录，避免任意文件被当成指令。无命中时明确返回「该仓库未定义项目规则」。',
+    parameters: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: '仓库根目录的绝对路径，省略时使用当前工作目录' },
+        topic: {
+          type: 'string',
+          description: '按关键词过滤，如 api、frontend、migration；匹配名称、描述、appliesTo 与正文',
+        },
+      },
+      additionalProperties: false,
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          root: { type: 'string' },
+          matched: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                name: { type: 'string' },
+                description: { type: 'string' },
+                appliesTo: { type: 'string' },
+                content: { type: 'string' },
+                path: { type: 'string' },
+              },
+              required: ['name', 'description', 'appliesTo', 'content', 'path'],
+            },
+          },
+          notes: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['root', 'matched', 'notes'],
+      },
+      render: (_args, value) =>
+        [{ type: 'text', text: renderGuidelines(value as unknown as GuidelinesReport) }],
+    },
+    async execute(args, exec) {
+      const input = (args ?? {}) as { path?: unknown; topic?: unknown }
+      if (input.path !== undefined && typeof input.path !== 'string')
+        throw new Error('path 必须是字符串：仓库根目录的绝对路径')
+      if (input.topic !== undefined && typeof input.topic !== 'string')
+        throw new Error('topic 必须是字符串：用于过滤项目规则的关键词')
+      const root = path.resolve(input.path ?? process.cwd())
+      if (!existsSync(root)) throw new Error(`目录不存在：${root}`)
+      exec.signal?.throwIfAborted()
+      return collectRepoGuidelines(root, input.topic)
+    },
+  }
+  ctx.tools.register(repoGuidelinesTool)
+
+  // 6) 闭环验证：只执行项目声明的只读检查（lint/typecheck/test），不接受任意命令
   const runChecksTool: ToolDefinition = {
     name: 'run_checks',
     description:
@@ -1967,7 +2150,7 @@ export function apply(ctx: Context) {
   }
   ctx.tools.register(runChecksTool)
 
-  // 6) 随包分发的 Skill：注册进 ctx.skills（无 skills 服务的组合里自动跳过）
+  // 7) 随包分发的 Skill：注册进 ctx.skills（无 skills 服务的组合里自动跳过）
   const skillsDir = fileURLToPath(new URL('../skills', import.meta.url))
   const skills = loadSkills(skillsDir)
   ctx.inject(['skills'], (skillCtx) => {

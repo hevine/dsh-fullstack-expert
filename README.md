@@ -1,6 +1,6 @@
 # dsh-fullstack-expert
 
-给 DeepSeek Harness（dsh）用的「全栈工程专家」组合包：常驻工程准则 + 技术栈探测 + 仓库规约抽取 + 可验证的只读检查 + 前端 / 后端 / 数据库 / 部署四个 Skill。
+给 DeepSeek Harness（dsh）用的「全栈工程专家」组合包：常驻工程准则 + 技术栈探测 + 仓库规约抽取 + 仓库项目规则 + 可验证的只读检查 + 前端 / 后端 / 数据库 / 部署四个 Skill。
 
 ## 它贡献了什么
 
@@ -10,17 +10,19 @@
 | 工程流程引导 | `ctx.systemPrompt.section({ order: 450 })` | `src/index.ts` |
 | `stack_probe` 技术栈探测（只读） | 原始 `ToolDefinition` → `ctx.tools.register` | `src/index.ts` |
 | `repo_conventions` 仓库规约抽取（只读） | 同上 | `src/index.ts` |
+| `repo_guidelines` 仓库项目规则读取（只读） | 同上；只读 `.dsh/skills/*/SKILL.md` | `src/index.ts` |
 | `run_checks` 只读检查执行 | 同上；只跑项目声明的 lint/typecheck/test | `src/index.ts` |
 | 四个分层 Skill | `ctx.skills.register`（运行时注册） | `skills/*/SKILL.md` |
 
 Skill 由插件自己注册进 `ctx.skills`，不需要改 `skill-filesystem` 配置。组合里没有 skills 服务时（例如极简 profile），插件照常加载，只是不注册 Skill。
 
-## 三个工具
+## 四个工具
 
 | 工具 | 作用 | 副作用 |
 |---|---|---|
 | `stack_probe` | 语言、框架、子项目、lint/test 命令、Makefile 目标、CI、容器 | 只读 |
 | `repo_conventions` | 命名风格、测试位置、配置清单、`.env` 变量名、Git 提交风格、建议先读文件 | 只读（含 `git log`） |
+| `repo_guidelines` | 读取仓库根 `.dsh/skills/*/SKILL.md` 的项目规则，可按 `topic` 过滤 | 只读 |
 | `run_checks` | 跑项目声明的 lint / typecheck / test / build，返回状态、退出码、耗时与输出尾部 | lint/typecheck/test 只读；build 写产物，需显式请求 |
 
 `run_checks` 的命令来源只有四种，不接受任意命令：
@@ -51,6 +53,25 @@ Skill 由插件自己注册进 `ctx.skills`，不需要改 `skill-filesystem` �
 ```
 
 `run_checks` 也会在结果说明里带上同样的提醒，避免「前端改了、二进制里还是旧 UI」。整个检查只读，不执行构建。
+
+## 项目规则住进仓库
+
+插件不内置任何具体仓库的业务规则。仓库自己的约定放在仓库根的 `.dsh/skills/<topic>/SKILL.md`，跟随 git 走：
+
+```
+<repo>/.dsh/skills/api-contract/SKILL.md
+```
+
+模型在动手前调用 `repo_guidelines`，工具结果里会带上命中的规则正文：
+
+- 只读 `.dsh/skills/`，不把仓库里的任意文件当成指令；
+- 传 `topic`（如 `api`、`frontend`）按名称、描述、`appliesTo` 与正文过滤；
+- 单次返回上限 20KB，超出会截断并提示直接读文件；
+- 未命中时明确返回「该仓库未定义项目规则」，模型退回通用 Skill，而不是沿用别的仓库假设。
+
+规则写法用 [templates/repo-skill.md](templates/repo-skill.md)：frontmatter 里的 `name` / `description` / `appliesTo`，正文固定为 **不变量 / 必读文件 / 完成标准** 三段。试点仓库 lingua-ops 的样板在 `.dsh/skills/api-contract/SKILL.md`。
+
+为什么不用 `ctx.skills.register` 注册项目 skill：那是进程级全局注册，一个会话切换多个仓库时，A 仓库的规则会污染 B 仓库。工具结果注入天然按调用作用域生效。
 
 ## 安装
 
@@ -126,6 +147,7 @@ dsh-fullstack-expert/
 ├─ src/index.ts            # 插件源码
 ├─ lib/index.js            # 构建产物（提交进仓库，GitHub 安装直接可用）
 ├─ skills/{frontend,backend,database,deploy}/SKILL.md
+├─ templates/repo-skill.md  # 仓库项目规则模板（不变量 / 必读文件 / 完成标准）
 └─ config/agent-presets/fullstack/   # 可选 preset 片段
 ```
 
@@ -134,7 +156,7 @@ dsh-fullstack-expert/
 - 类型校验：`npm run typecheck`（需要先 `npm install`）。
 - 改了 `src/index.ts` 后必须 `npm run build` 并提交 `lib/`，否则安装到的仍是旧产物。
 - 加载失败先看终端：`inject` 漏写会报 `ctx.tools` / `ctx.systemPrompt` 未解析。
-- 工具重名会直接失败；新增工具请保持 `stack_probe` / `run_checks` 这类清晰命名，并在 `description` 里写清是否有副作用。
+- 工具重名会直接失败；新增工具请保持 `stack_probe` / `repo_guidelines` 这类清晰命名，并在 `description` 里写清是否有副作用与读取范围。
 - `run_checks` 会把 `exec.signal` 透传给子进程（SIGTERM，2 秒后 SIGKILL），并声明 `timeoutMs: 600000` 支持协作取消。
 - 人设与流程段会被写进系统提示词前缀：不要把时间、git 状态、目录列表之类动态内容塞进 `section`，否则每轮都会击穿 KV cache。需要动态事实时让模型调用 `stack_probe`。
 
