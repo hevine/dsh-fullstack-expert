@@ -1,7 +1,7 @@
 {
   "name": "dsh-fullstack-expert",
-  "version": "0.1.0",
-  "description": "全栈工程专家：常驻工程准则 + stack_probe 技术栈探测 + 前端/后端/数据库/部署四个 Skill",
+  "version": "0.3.0",
+  "description": "全栈工程专家：常驻工程准则 + stack_probe 技术栈探测 + repo_conventions 规约与产物新鲜度 + run_checks 检查与构建 + 前端/后端/数据库/部署四个 Skill",
   "license": "MIT",
   "type": "module",
   "main": "lib/index.js",

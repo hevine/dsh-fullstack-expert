@@ -1,6 +1,6 @@
 # dsh-fullstack-expert
 
-给 DeepSeek Harness（dsh）用的「全栈工程专家」组合包：常驻工程准则 + 技术栈探测工具 + 前端 / 后端 / 数据库 / 部署四个 Skill。
+给 DeepSeek Harness（dsh）用的「全栈工程专家」组合包：常驻工程准则 + 技术栈探测 + 仓库规约抽取 + 可验证的只读检查 + 前端 / 后端 / 数据库 / 部署四个 Skill。
 
 ## 它贡献了什么
 
@@ -9,9 +9,48 @@
 | 常驻人设（工程准则） | `ctx.systemPrompt.section({ order: 1 })` | `src/index.ts` |
 | 工程流程引导 | `ctx.systemPrompt.section({ order: 450 })` | `src/index.ts` |
 | `stack_probe` 技术栈探测（只读） | 原始 `ToolDefinition` → `ctx.tools.register` | `src/index.ts` |
+| `repo_conventions` 仓库规约抽取（只读） | 同上 | `src/index.ts` |
+| `run_checks` 只读检查执行 | 同上；只跑项目声明的 lint/typecheck/test | `src/index.ts` |
 | 四个分层 Skill | `ctx.skills.register`（运行时注册） | `skills/*/SKILL.md` |
 
 Skill 由插件自己注册进 `ctx.skills`，不需要改 `skill-filesystem` 配置。组合里没有 skills 服务时（例如极简 profile），插件照常加载，只是不注册 Skill。
+
+## 三个工具
+
+| 工具 | 作用 | 副作用 |
+|---|---|---|
+| `stack_probe` | 语言、框架、子项目、lint/test 命令、Makefile 目标、CI、容器 | 只读 |
+| `repo_conventions` | 命名风格、测试位置、配置清单、`.env` 变量名、Git 提交风格、建议先读文件 | 只读（含 `git log`） |
+| `run_checks` | 跑项目声明的 lint / typecheck / test / build，返回状态、退出码、耗时与输出尾部 | lint/typecheck/test 只读；build 写产物，需显式请求 |
+
+`run_checks` 的命令来源只有四种，不接受任意命令：
+
+1. `package.json` 的 `lint` / `typecheck` / `test` / `build` 脚本；
+2. 项目内 `node_modules/.bin/tsc --noEmit`（有 `tsconfig.json` 且未声明 typecheck 脚本时兜底，不产出文件）；
+3. `go vet ./...`、`go test ./...`、`go build ./...`；
+4. Makefile 的 `build` 目标（存在时优先，视为多栈仓库的完整构建入口，且不再重复跑子项目 build）。
+
+`build` 会写产物、可能触发项目自己的依赖安装，因此不在默认检查里；传 `checks: ["build"]` 才执行。传 `dryRun: true` 只列出将要执行的命令、不实际运行。
+
+试点仓库（lingua-ops：Go 单二进制 + React 前端）实测：
+
+```
+[✓ passed] .   lint      go vet ./...       0.8s
+[✓ passed] web typecheck tsc --noEmit        1.8s
+[✓ passed] .   test      go test ./...       2.3s
+```
+
+### 前端产物新鲜度（只读）
+
+`repo_conventions` 会扫描 `//go:embed` 目录，再用 `vite.config.*` 的 `outDir` 反查出对应的前端项目，比较源码最新 mtime 与产物时间：
+
+```
+产物新鲜度：
+- web/src → internal/webui/dist：stale（源码 2026-11-23 13:28:21 晚于产物 2026-11-23 10:40:03）
+注意：web/src 比 internal/webui/dist 新，需重建前端，否则二进制里仍是旧 UI
+```
+
+`run_checks` 也会在结果说明里带上同样的提醒，避免「前端改了、二进制里还是旧 UI」。整个检查只读，不执行构建。
 
 ## 安装
 
@@ -95,7 +134,8 @@ dsh-fullstack-expert/
 - 类型校验：`npm run typecheck`（需要先 `npm install`）。
 - 改了 `src/index.ts` 后必须 `npm run build` 并提交 `lib/`，否则安装到的仍是旧产物。
 - 加载失败先看终端：`inject` 漏写会报 `ctx.tools` / `ctx.systemPrompt` 未解析。
-- 工具重名会直接失败；新增工具请保持 `stack_probe` 这类前缀命名。
+- 工具重名会直接失败；新增工具请保持 `stack_probe` / `run_checks` 这类清晰命名，并在 `description` 里写清是否有副作用。
+- `run_checks` 会把 `exec.signal` 透传给子进程（SIGTERM，2 秒后 SIGKILL），并声明 `timeoutMs: 600000` 支持协作取消。
 - 人设与流程段会被写进系统提示词前缀：不要把时间、git 状态、目录列表之类动态内容塞进 `section`，否则每轮都会击穿 KV cache。需要动态事实时让模型调用 `stack_probe`。
 
 ## 版本适配
