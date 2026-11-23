@@ -1,0 +1,5 @@
+# 组合包层：安装进 profile 后由 dsh 自动应用。
+# 插件行按包名引用，模块解析由 profile 的 node_modules 完成。
+- insert:
+    - id: fullstack-expert
+      name: 'dsh-fullstack-expert'

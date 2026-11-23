@@ -1,0 +1,8 @@
+# 可选的会话级 preset「全栈专家」的元数据。
+# 它本身不会被 dsh 读取；生效的是同目录 agent.cordis.yml 里的
+# @deepseek-ai/dsh-agent-preset 行，需要手动复制进 profile 的 cordis.patch.yml。
+# 只想要全局生效时不要用 preset：直接安装组合包即可（见 README）。
+id: fullstack
+name: 全栈专家
+description: 端到端实现并自校验的全栈 Agent：工程准则 + stack_probe + 四个分层 Skill。
+order: 2

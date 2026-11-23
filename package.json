@@ -1,0 +1,39 @@
+{
+  "name": "dsh-fullstack-expert",
+  "version": "0.1.0",
+  "description": "全栈工程专家：常驻工程准则 + stack_probe 技术栈探测 + 前端/后端/数据库/部署四个 Skill",
+  "license": "MIT",
+  "type": "module",
+  "main": "lib/index.js",
+  "files": [
+    "lib",
+    "skills",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "fullstack"
+  ],
+  "engines": {
+    "dsh": ">=0.2.0 <0.3.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.1.0",
+    "@deepseek-ai/dsh-llm": "0.2.2-rc.5",
+    "@deepseek-ai/dsh-skill": "0.2.2-rc.5",
+    "@deepseek-ai/dsh-system-prompt": "0.2.2-rc.5",
+    "@deepseek-ai/dsh-tools": "0.2.2-rc.5",
+    "typescript": "^5.9.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

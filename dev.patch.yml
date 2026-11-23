@@ -1,0 +1,5 @@
+# 本地调试层：不安装成包，直接把插件加进当前 profile 的组合。
+# 路径必须是绝对路径，且指向构建产物；改目录或换机器时同步修改。
+- insert:
+    - id: fullstack-expert
+      name: '/Users/zhua/Doubao/chats/2026-11-23/new-chat/dsh-fullstack-expert/lib/index.js'

@@ -1,0 +1,48 @@
+# 可选的会话级 preset：把本文件内容追加到 profile 的 cordis.patch.yml。
+# 行列出的工具按 dsh 0.2.x 的包名编写；升级 dsh 后请对照官方 standard preset
+# （packages/bundle/web-app/presets/standard.patch.yml）同步工具清单。
+- insert:
+    - id: preset-fullstack
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: fullstack
+        name: 全栈专家
+        description: 端到端实现并自校验的全栈 Agent：工程准则 + stack_probe + 四个分层 Skill。
+        order: 2
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: You are a full-stack engineering agent powered by the {{model}} model.
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+            disabled: !!js process.platform === 'win32'
+          - id: tool-pwsh
+            name: '@deepseek-ai/dsh-tool-pwsh'
+            disabled: !!js process.platform !== 'win32'
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+          - id: skill-filesystem
+            name: '@deepseek-ai/dsh-skill-filesystem'
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: tool-web
+            name: '@deepseek-ai/dsh-tool-web'
+            config:
+              fetch: true
+          # 本插件本体。走 preset 时不需要再安装组合包层，
+          # 否则全局与 preset 各注册一份（同名 scoped 注册会覆盖全局，不会报错）。
+          - id: fullstack-expert
+            name: 'dsh-fullstack-expert'
